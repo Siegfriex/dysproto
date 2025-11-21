@@ -113,14 +113,14 @@ export const analyzeImage = async (file: File): Promise<AnalysisResult> => {
             4. Generate relevant design keywords.
             5. Provide a summary and actionable suggestions based on modern trends (e.g., Red Dot Award standards, Legacy Media standards).
             
-            IMPORTANT: All textual explanations, summaries, reasons, benchmarks, and suggestions MUST be in Korean (한국어).`
+            IMPORTANT: All textual explanations, summaries, reasons, benchmarks, and suggestions MUST be in Korean (한국어). Do NOT use emojis.`
           }
         ]
       },
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        systemInstruction: "You are 'dysproto', an AI design mentor. Your tone is objective, professional, yet encouraging. You help designers grow by providing data-driven feedback. Always respond in Korean (한국어)."
+        systemInstruction: "You are 'dysproto', an AI design mentor. Your tone is objective, professional, yet encouraging. You help designers grow by providing data-driven feedback. Always respond in Korean (한국어). Do NOT use emojis in your response."
       }
     });
 
@@ -183,7 +183,7 @@ export const chatWithDesignMentor = async (
         Suggest references or trends (Red Dot, etc.) if relevant.
         
         Format your response nicely with bullet points or sections if needed.
-        IMPORTANT: You MUST answer in Korean (한국어).`
+        IMPORTANT: You MUST answer in Korean (한국어). Do NOT use emojis.`
       },
       history: currentHistory.map(msg => ({
         role: msg.role,

@@ -126,13 +126,13 @@ const UploadAnalysis: React.FC = () => {
         timestamp: Date.now()
     }]);
 
-    // Real-time progress simulation in chat (Granular Korean stages)
+    // Real-time progress simulation in chat (Granular Korean stages without emojis)
     const steps = [
-        { text: "🔍 레이아웃 그리드 및 여백 구조 추출 중... (Analyzing Layout Structure)", delay: 1500 },
-        { text: "🎨 주요 색상 팔레트 및 대비율 계산 중... (Extracting Color DNA)", delay: 3500 },
-        { text: "🔤 타이포그래피 계층 및 폰트 스타일 분석 중... (Evaluating Typography)", delay: 5500 },
-        { text: "🧩 UI 컴포넌트 패턴 및 일관성 검증 중... (Checking Consistency)", delay: 7500 },
-        { text: "✨ 디자인 트렌드 비교 및 최종 리포트 생성 중... (Finalizing Report)", delay: 9500 },
+        { text: "레이아웃 그리드 및 여백 구조 추출 중... (Analyzing Layout Structure)", delay: 1500 },
+        { text: "주요 색상 팔레트 및 대비율 계산 중... (Extracting Color DNA)", delay: 3500 },
+        { text: "타이포그래피 계층 및 폰트 스타일 분석 중... (Evaluating Typography)", delay: 5500 },
+        { text: "UI 컴포넌트 패턴 및 일관성 검증 중... (Checking Consistency)", delay: 7500 },
+        { text: "디자인 트렌드 비교 및 최종 리포트 생성 중... (Finalizing Report)", delay: 9500 },
     ];
 
     const timeouts: ReturnType<typeof setTimeout>[] = [];
