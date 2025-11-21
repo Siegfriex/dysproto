@@ -19,12 +19,14 @@ const Sidebar: React.FC = () => {
     <div className="w-16 md:w-64 h-screen bg-white border-r border-slate-100 flex flex-col flex-shrink-0 transition-all duration-300 z-50 fixed md:relative">
       <div className="h-16 md:h-20 flex items-center justify-center md:justify-start md:px-8">
         {/* Logo Area */}
-        <div className="flex items-center gap-2">
-           <div className="w-8 h-8 rounded-xl bg-primary-500 flex items-center justify-center text-white font-bold text-lg shadow-lg shadow-primary-200 shrink-0">
-             d
-           </div>
-           <span className="text-2xl font-bold text-primary-500 hidden md:block tracking-tight">dys</span>
-        </div>
+        <Link to="/" className="flex items-center gap-3">
+           <img
+             src="/logo.svg"
+             alt="dysproto logo"
+             className="w-10 h-10 md:w-12 md:h-12 shrink-0 transition-transform duration-200 hover:scale-105"
+           />
+           <span className="text-2xl font-bold text-primary-500 hidden md:block tracking-tight">dysproto</span>
+        </Link>
       </div>
 
       <nav className="flex-1 py-4 md:py-8 flex flex-col gap-2 md:gap-3 px-2 md:px-6">

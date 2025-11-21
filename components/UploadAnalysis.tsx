@@ -368,7 +368,7 @@ const UploadAnalysis: React.FC = () => {
                      {/* Centered Content - No negative margins, right padding for optical centering */}
                      <div className="flex-1 flex flex-col items-center justify-center md:pr-32">
                          <div className="text-center mb-8 md:mb-10">
-                             <div className="inline-flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-[1.5rem] md:rounded-[2rem] bg-primary-500 text-white text-3xl md:text-4xl font-bold mb-4 md:mb-6 shadow-xl shadow-primary-200 transform hover:scale-105 transition-transform duration-500">d</div>
+                             <div className="flex justify-center mb-6 md:mb-8"><img src="/logo_main.svg" alt="dysproto" className="w-32 h-auto md:w-44 transition-transform duration-300 hover:scale-105" /></div>
                              <h1 className="text-3xl md:text-5xl font-bold text-slate-900 mb-3 md:mb-4 tracking-tight font-sans">
                                  Design DNA Analysis
                              </h1>
