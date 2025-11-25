@@ -23,6 +23,7 @@ export interface MetricDetail {
 }
 
 export interface AnalysisResult {
+  id?: string;
   fileName: string;
   timestamp: string;
   summary: string;
@@ -39,6 +40,7 @@ export interface AnalysisResult {
   keywords: string[];
   detectedObjects: DetectedObject[];
   suggestions: string;
+  imageUrl?: string;
 }
 
 export interface ChatMessage {

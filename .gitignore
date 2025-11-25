@@ -18,6 +18,19 @@ dist-ssr
 .env.production
 .env.*.local
 
+# Build outputs
+functions/lib/
+functions/lib/**/*
+
+# Backup files
+*.backup
+*.bak
+
+# Deployment documentation with sensitive information
+DEPLOYMENT_*.md
+FINAL_DEPLOYMENT_*.md
+DEPLOYMENT_INFO.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

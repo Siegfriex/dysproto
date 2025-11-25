@@ -1,10 +1,25 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResult, ChatMessage } from "../types";
+import { callAnalyzeDesign, callChatWithMentor } from "./dataService";
 
-const API_KEY = process.env.API_KEY || '';
+// ============================================================================
+// Types & Interfaces
+// ============================================================================
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+export interface AnalysisProgress {
+  stage: "preparing" | "uploading" | "analyzing" | "complete" | "error" | "retrying";
+  progress: number;
+  message: string;
+}
+
+export interface AnalyzeImageOptions {
+  maxRetries?: number;
+  onProgress?: (progress: AnalysisProgress) => void;
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
 const fileToGenerativePart = async (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -19,183 +34,128 @@ const fileToGenerativePart = async (file: File): Promise<string> => {
   });
 };
 
-export const analyzeImage = async (file: File): Promise<AnalysisResult> => {
-  try {
-    const base64Data = await fileToGenerativePart(file);
-    
-    const metricProps = {
-        type: Type.OBJECT,
-        properties: {
-          score: { type: Type.NUMBER },
-          reason: { type: Type.STRING, description: "Detailed reason for the score in Korean." },
-          benchmark: { type: Type.STRING, description: "The specific design standard or criteria used (e.g., Material Design Grid, WCAG 2.1 AA) in Korean." },
-          keyElements: { 
-              type: Type.ARRAY, 
-              items: { type: Type.STRING }, 
-              description: "List of specific UI elements (e.g., Navbar, CTA Button) that influenced this score in Korean." 
-          }
-        },
-        required: ["score", "reason", "benchmark", "keyElements"]
-    };
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    const schema = {
-      type: Type.OBJECT,
-      properties: {
-        summary: { type: Type.STRING, description: "A comprehensive summary of the design in Korean (한국어)." },
-        metrics: {
-          type: Type.OBJECT,
-          properties: {
-            layout: metricProps,
-            typography: metricProps,
-            color: metricProps,
-            components: metricProps,
-            formLanguage: metricProps,
-            overall: { type: Type.NUMBER, description: "Average or weighted overall score" },
-          },
-          required: ["layout", "typography", "color", "components", "formLanguage", "overall"]
-        },
-        colors: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              hex: { type: Type.STRING },
-              rgb: { type: Type.STRING }
-            }
-          }
-        },
-        keywords: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        detectedObjects: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              confidence: { type: Type.NUMBER }
-            }
-          }
-        },
-        suggestions: { type: Type.STRING, description: "Actionable design suggestions in Korean (한국어)." }
-      }
-    };
+const isRetryableError = (error: any): boolean => {
+  const retryableCodes = ["unavailable", "deadline-exceeded", "resource-exhausted"];
+  return (
+    retryableCodes.includes(error.code) ||
+    error.message?.toLowerCase().includes("network") ||
+    error.message?.toLowerCase().includes("timeout")
+  );
+};
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: file.type,
-              data: base64Data
-            }
-          },
-          {
-            text: `Analyze this design interface image. Act as a professional design critic (User Persona: Design Mentor). 
-            
-            1. Identify key objects (buttons, navbars, images, text blocks).
-            2. Extract the main color palette.
-            3. Provide 5-axis objective scores (0-100) and detailed reasoning specifically for:
-               - Layout (Grid, Spacing)
-               - Typography (Hierarchy, Readability)
-               - Color (Harmony, Contrast)
-               - Components (Consistency)
-               - Form Language (Shape, Style)
-               
-            For each metric, you MUST provide:
-            - A Score (0-100)
-            - A Detailed Reason (Why?)
-            - A Benchmark (What standard did you use? e.g., 8pt Grid System, Apple Human Interface Guidelines, WCAG, Gestalt Principles)
-            - Key Elements (Which specific parts of the image led to this score?)
+// ============================================================================
+// Main Analysis Function
+// ============================================================================
 
-            4. Generate relevant design keywords.
-            5. Provide a summary and actionable suggestions based on modern trends (e.g., Red Dot Award standards, Legacy Media standards).
-            
-            IMPORTANT: All textual explanations, summaries, reasons, benchmarks, and suggestions MUST be in Korean (한국어). Do NOT use emojis.`
-          }
-        ]
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: schema,
-        systemInstruction: "You are 'dysproto', an AI design mentor. Your tone is objective, professional, yet encouraging. You help designers grow by providing data-driven feedback. Always respond in Korean (한국어). Do NOT use emojis in your response."
-      }
-    });
+export const analyzeImage = async (
+  file: File,
+  options?: AnalyzeImageOptions
+): Promise<AnalysisResult & { id?: string; imageUrl?: string }> => {
+  const maxRetries = options?.maxRetries ?? 3;
+  const onProgress = options?.onProgress;
+  let lastError: Error | null = null;
 
-    const text = response.text;
-    if (!text) throw new Error("No response from AI");
-    
-    // Sanitize JSON: remove markdown code blocks if present
-    const sanitizedText = text.replace(/```json\n|\n```/g, "").trim();
-    
-    const parsed = JSON.parse(sanitizedText);
-
-    return {
-      fileName: file.name,
-      timestamp: new Date().toLocaleString(),
-      ...parsed
-    };
-
-  } catch (error) {
-    console.error("Analysis failed", error);
-    throw error;
+  // File validation
+  const validTypes = ["image/jpeg", "image/png", "image/webp"];
+  if (!validTypes.includes(file.type)) {
+    throw new Error("지원하지 않는 파일 형식입니다. JPEG, PNG, WebP만 지원합니다.");
   }
+
+  const maxSize = 10 * 1024 * 1024; // 10MB
+  if (file.size > maxSize) {
+    throw new Error("파일 크기가 10MB를 초과합니다.");
+  }
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      onProgress?.({
+        stage: "preparing",
+        progress: 10,
+        message: "이미지를 준비하고 있습니다",
+      });
+
+      const base64Data = await fileToGenerativePart(file);
+
+      onProgress?.({
+        stage: "uploading",
+        progress: 25,
+        message: "이미지를 업로드하고 있습니다",
+      });
+
+      onProgress?.({
+        stage: "analyzing",
+        progress: 50,
+        message: "AI가 디자인을 분석하고 있습니다",
+      });
+
+      const result = await callAnalyzeDesign(base64Data, file.type, file.name);
+
+      onProgress?.({
+        stage: "complete",
+        progress: 100,
+        message: "분석이 완료되었습니다",
+      });
+
+      return {
+        id: result.analysisId,
+        fileName: file.name,
+        timestamp: new Date().toLocaleString("ko-KR", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        imageUrl: result.imageUrl,
+        ...result.data,
+      };
+    } catch (error: any) {
+      lastError = error;
+      console.error(`Analysis attempt ${attempt}/${maxRetries} failed:`, error);
+
+      if (!isRetryableError(error) || attempt === maxRetries) {
+        onProgress?.({
+          stage: "error",
+          progress: 0,
+          message: `분석 실패: ${error.message || "알 수 없는 오류"}`,
+        });
+        throw error;
+      }
+
+      const waitTime = Math.pow(2, attempt - 1) * 1000;
+      onProgress?.({
+        stage: "retrying",
+        progress: 10 * attempt,
+        message: `재시도 중 (${attempt}/${maxRetries})`,
+      });
+      await delay(waitTime);
+    }
+  }
+
+  throw lastError || new Error("분석에 실패했습니다.");
 };
 
 export const chatWithDesignMentor = async (
   currentHistory: ChatMessage[],
   newMessage: string,
-  context: AnalysisResult
-): Promise<string> => {
+  context: AnalysisResult,
+  sessionId: string | null = null
+): Promise<{ response: string; sessionId: string }> => {
   try {
-    const contextString = `
-      Current Design Context (File: ${context.fileName}):
-      Summary: ${context.summary}
-      Scores & Detailed Analysis: 
-      - Layout: ${context.metrics.layout.score} 
-        (Benchmark: ${context.metrics.layout.benchmark}, Key Elements: ${context.metrics.layout.keyElements.join(', ')})
-        Reason: ${context.metrics.layout.reason}
-      - Typography: ${context.metrics.typography.score}
-        (Benchmark: ${context.metrics.typography.benchmark}, Key Elements: ${context.metrics.typography.keyElements.join(', ')})
-        Reason: ${context.metrics.typography.reason}
-      - Color: ${context.metrics.color.score}
-        (Benchmark: ${context.metrics.color.benchmark}, Key Elements: ${context.metrics.color.keyElements.join(', ')})
-        Reason: ${context.metrics.color.reason}
-      - Components: ${context.metrics.components.score}
-        (Benchmark: ${context.metrics.components.benchmark}, Key Elements: ${context.metrics.components.keyElements.join(', ')})
-        Reason: ${context.metrics.components.reason}
-      - Form Language: ${context.metrics.formLanguage.score}
-        (Benchmark: ${context.metrics.formLanguage.benchmark}, Key Elements: ${context.metrics.formLanguage.keyElements.join(', ')})
-        Reason: ${context.metrics.formLanguage.reason}
-      
-      Suggestions provided: ${context.suggestions}
-    `;
-
-    const chat = ai.chats.create({
-      model: 'gemini-3-pro-preview',
-      config: {
-        systemInstruction: `You are dysproto's AI Design Mentor. The user has uploaded a design. 
-        Here is the analysis of that design: ${contextString}.
-        Answer the user's questions specifically about this design. 
-        Reference the metrics, benchmarks, and specific elements in your answers to sound authoritative.
-        Suggest references or trends (Red Dot, etc.) if relevant.
-        
-        Format your response nicely with bullet points or sections if needed.
-        IMPORTANT: You MUST answer in Korean (한국어). Do NOT use emojis.`
-      },
-      history: currentHistory.map(msg => ({
-        role: msg.role,
-        parts: [{ text: msg.text }]
-      }))
-    });
-
-    const result = await chat.sendMessage({ message: newMessage });
-    return result.text || "응답을 생성할 수 없습니다.";
+    // Call Firebase Function instead of direct API
+    const result = await callChatWithMentor(newMessage, sessionId, context);
+    return {
+      response: result.response,
+      sessionId: result.sessionId
+    };
 
   } catch (error) {
     console.error("Chat failed", error);
-    return "죄송합니다. 현재 디자인 멘토링 연결에 문제가 발생했습니다.";
+    return {
+      response: "죄송합니다. 현재 디자인 멘토링 연결에 문제가 발생했습니다.",
+      sessionId: sessionId || ""
+    };
   }
 };

@@ -4,3 +4,4 @@ lib/
 *.local
 .env
 .env.local
+.env.production

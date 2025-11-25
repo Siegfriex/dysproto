@@ -52,6 +52,7 @@ const UploadAnalysis: React.FC = () => {
   ]);
   const [inputMessage, setInputMessage] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   
   // Modal State for Metrics
   const [selectedMetricKey, setSelectedMetricKey] = useState<string | null>(null);
@@ -214,16 +215,17 @@ const UploadAnalysis: React.FC = () => {
         suggestions: ''
     };
 
-    const responseText = await chatWithDesignMentor(chatMessages, inputMessage, context);
+    const result = await chatWithDesignMentor(chatMessages, inputMessage, context, chatSessionId);
 
     const botMsg: ChatMessage = {
       id: (Date.now() + 1).toString(),
       role: 'model',
-      text: responseText,
+      text: result.response,
       timestamp: Date.now()
     };
 
     setChatMessages(prev => [...prev, botMsg]);
+    setChatSessionId(result.sessionId);
     setIsChatLoading(false);
   };
 

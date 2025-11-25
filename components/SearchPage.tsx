@@ -1,18 +1,32 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Search, Image as ImageIcon, Sparkles, Bookmark, Award, X, Zap, BarChart3, Check, MoreHorizontal, ArrowUpRight, Filter } from 'lucide-react';
+import { Search, Image as ImageIcon, Sparkles, Bookmark, Award, X, Zap, BarChart3, Check, ArrowUpRight, Filter, Loader2, AlertCircle } from 'lucide-react';
 import { AnalysisResult, SearchResult } from '../types';
+import { callToggleBookmark, callGetBookmarks, callSearchImages } from '../services/dataService';
 
 const SearchPage: React.FC = () => {
   const location = useLocation();
   const [activeCategories, setActiveCategories] = useState<string[]>(['All']);
   const [searchTerm, setSearchTerm] = useState('');
   const [styleReflect, setStyleReflect] = useState(80);
-  const [allResults, setAllResults] = useState<SearchResult[]>([]); // Store raw mock data
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]); // Store filtered data
-  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   
+  // Data States
+  const [allResults, setAllResults] = useState<SearchResult[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
+  const [bookmarks, setBookmarks] = useState<Set<string>>(new Set());
+  
+  // Status States
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
+  
+  // Pagination
+  const [startIndex, setStartIndex] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const observer = useRef<IntersectionObserver | null>(null);
+
   // Context from Upload Page
   const analysisContext = location.state as { source?: string; analysis?: AnalysisResult; keywords?: string[] } | null;
   
@@ -24,35 +38,135 @@ const SearchPage: React.FC = () => {
 
   const categories = ['All', 'Web Design', 'Mobile UI', 'Branding', 'Print', 'Typography', 'Art Direction', '3D'];
 
-  // 1. Generate Mock Data
+  // 1. Load bookmarks
   useEffect(() => {
-    const keywords = analysisContext?.keywords || ['Modern', 'Minimal', 'Clean'];
-    
-    const mockResults: SearchResult[] = Array.from({ length: 30 }).map((_, i) => {
-        const isTrend = i < 4; 
-        const awards = isTrend ? (i % 2 === 0 ? ['Red Dot Winner 2024'] : ['Legacy Media Pick']) : undefined;
-        const similarity = Math.floor(Math.random() * 15) + 80; 
+    const loadBookmarks = async () => {
+      try {
+        const result = await callGetBookmarks();
+        const bookmarkIds = new Set(result.bookmarks.map(b => b.referenceId));
+        setBookmarks(bookmarkIds);
+      } catch (error) {
+        console.error('Failed to load bookmarks:', error);
+      }
+    };
+    loadBookmarks();
+  }, []);
 
-        return {
-            id: i.toString(),
-            imageUrl: `https://picsum.photos/400/${300 + (i % 4) * 50}?random=${i + 200}`,
-            title: `Ref ${keywords[i % keywords.length]} ${i + 1}`,
-            similarity: similarity,
-            category: categories[(i % 5) + 1],
-            reason: `스타일 톤(${keywords[i % keywords.length]}) 일치`,
-            awards: awards,
-            isSaved: false
-        };
+  // 2. Generate Query Helper
+  const generateSearchQuery = useCallback((analysis: AnalysisResult | null): string => {
+    if (!analysis) return '';
+    
+    const parts: string[] = [];
+    if (analysis.keywords && analysis.keywords.length > 0) {
+      parts.push(...analysis.keywords.slice(0, 3));
+    }
+    
+    const metrics = analysis.metrics;
+    if (metrics.layout.score >= 80) parts.push('modern layout');
+    if (metrics.color.score >= 80) parts.push('colorful');
+    if (metrics.formLanguage.score >= 80) parts.push('minimal');
+    
+    const query = parts.length > 0 ? parts.join(' ') + ' design' : 'modern design';
+    return query;
+  }, []);
+
+  // 3. Core Search Function
+  const executeSearch = useCallback(async (query: string, start: number = 1, isLoadMore: boolean = false) => {
+    if (!query.trim()) return;
+
+    if (isLoadMore) {
+        setIsLoadingMore(true);
+    } else {
+        setIsLoading(true);
+        setAllResults([]); // Reset results for new search
+        setStartIndex(1);
+        setHasMore(true);
+    }
+    
+    setError(null);
+    
+    try {
+      console.log(`📡 [SearchPage] Fetching images for: "${query}" (Start: ${start}, LoadMore: ${isLoadMore})`);
+      
+      const result = await callSearchImages({
+        query: query.trim(),
+        num: 10, // API limit per request usually 10
+        start: start,
+      });
+
+      console.log(`✅ [SearchPage] Received ${result.results.length} results (Total: ${result.totalResults})`);
+
+      const formattedResults: SearchResult[] = result.results.map((item) => ({
+        ...item,
+        isSaved: bookmarks.has(item.id),
+      }));
+
+      if (isLoadMore) {
+          setAllResults(prev => [...prev, ...formattedResults]);
+      } else {
+          setAllResults(formattedResults);
+      }
+
+      // Check if we have more results based on totalResults
+      const currentTotal = isLoadMore ? allResults.length + formattedResults.length : formattedResults.length;
+      const hasMoreResults = currentTotal < result.totalResults && formattedResults.length >= 10;
+      setHasMore(hasMoreResults);
+      
+      if (!isLoadMore) {
+          setStartIndex(11); // Next start index for pagination
+      } else {
+          setStartIndex(prev => prev + 10);
+      }
+      
+      setHasSearched(true);
+
+    } catch (error: any) {
+      console.error('❌ [SearchPage] Search failed:', error);
+      setError(error.message || '검색 중 오류가 발생했습니다.');
+      setHasMore(false);
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+    }
+  }, [bookmarks, allResults.length]);
+
+  // 4. Infinite Scroll Observer
+  const lastElementRef = useCallback((node: HTMLDivElement) => {
+    if (isLoading || isLoadingMore) return;
+    
+    if (observer.current) observer.current.disconnect();
+    
+    observer.current = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting && hasMore && searchTerm && !isLoading && !isLoadingMore) {
+        console.log('🔄 [SearchPage] Loading more results...');
+        // Use current startIndex + 10 for next page
+        executeSearch(searchTerm, startIndex, true);
+      }
+    }, {
+      rootMargin: '200px' // Start loading 200px before reaching the bottom
     });
     
-    setAllResults(mockResults);
+    if (node) observer.current.observe(node);
+  }, [isLoading, isLoadingMore, hasMore, searchTerm, startIndex, executeSearch]);
 
-    if (analysisContext?.keywords && analysisContext.keywords.length > 0) {
-        setSearchTerm(analysisContext.keywords.join(', '));
+  // 5. Initial Auto Search (Run ONCE)
+  useEffect(() => {
+    if (hasSearched) return; // Prevent repeat on re-renders
+
+    let initialQuery = '';
+    if (analysisContext?.analysis) {
+        initialQuery = generateSearchQuery(analysisContext.analysis);
+    } else if (analysisContext?.keywords && analysisContext.keywords.length > 0) {
+        initialQuery = analysisContext.keywords.slice(0, 3).join(' ') + ' design';
     }
-  }, [analysisContext]);
 
-  // 2. Filter Logic
+    if (initialQuery) {
+        setSearchTerm(initialQuery);
+        executeSearch(initialQuery, 1, false);
+    }
+  }, [analysisContext, hasSearched, generateSearchQuery, executeSearch]);
+
+  // 6. Filter Logic (Client-side filtering)
   useEffect(() => {
     let results = allResults;
 
@@ -61,21 +175,42 @@ const SearchPage: React.FC = () => {
         results = results.filter(item => activeCategories.includes(item.category));
     }
 
-    // Filter by Search Term
-    if (searchTerm) {
-        const lowerTerm = searchTerm.toLowerCase();
-        results = results.filter(item => 
-            item.title.toLowerCase().includes(lowerTerm) || 
-            item.category.toLowerCase().includes(lowerTerm)
-        );
-    }
-
-    // Filter by Style Reflection (Mock logic: filter out low similarity items based on slider)
+    // Filter by Style Reflection (Client-side simulation)
     const threshold = Math.max(0, styleReflect - 20); 
     results = results.filter(item => item.similarity >= threshold);
 
     setSearchResults(results);
-  }, [allResults, activeCategories, searchTerm, styleReflect]);
+  }, [allResults, activeCategories, styleReflect]);
+
+  // Handlers
+  const handleManualSearch = () => {
+      if (searchTerm.trim() && !isLoading) {
+          // Reset everything for new search
+          setHasMore(true);
+          setHasSearched(false);
+          executeSearch(searchTerm, 1, false);
+      }
+  };
+
+  const handleStyleSearch = () => {
+      if (analysisContext?.analysis) {
+          const query = generateSearchQuery(analysisContext.analysis);
+          if (query) {
+              setSearchTerm(query);
+              setHasMore(true);
+              setHasSearched(false);
+              executeSearch(query, 1, false);
+          }
+      } else if (searchTerm.trim()) {
+          handleManualSearch();
+      }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !isLoading) {
+        handleManualSearch();
+    }
+  };
 
   const toggleCategory = (cat: string) => {
       if (cat === 'All') {
@@ -83,47 +218,52 @@ const SearchPage: React.FC = () => {
       } else {
           setActiveCategories(prev => {
               const withoutAll = prev.filter(c => c !== 'All');
-              if (prev.includes(cat)) {
-                  const remaining = withoutAll.filter(c => c !== cat);
-                  return remaining.length === 0 ? ['All'] : remaining;
-              } else {
-                  return [...withoutAll, cat];
-              }
+              return prev.includes(cat) 
+                ? withoutAll.filter(c => c !== cat).length === 0 ? ['All'] : withoutAll.filter(c => c !== cat)
+                : [...withoutAll, cat];
           });
       }
   };
 
-  const handleSave = (id: string) => {
-      const updateList = (list: SearchResult[]) => list.map(item => 
-        item.id === id ? { ...item, isSaved: !item.isSaved } : item
-      );
+  const handleSave = async (id: string) => {
+      const item = allResults.find(r => r.id === id);
+      if (!item) return;
 
-      setAllResults(prev => updateList(prev)); 
-      
-      if (selectedResult && selectedResult.id === id) {
-          setSelectedResult(prev => prev ? { ...prev, isSaved: !prev.isSaved } : null);
+      try {
+        const result = await callToggleBookmark({
+          referenceId: id,
+          imageUrl: item.imageUrl,
+          title: item.title,
+          category: item.category,
+          similarity: item.similarity,
+          reason: item.reason,
+        });
+
+        const newBookmarks = new Set(bookmarks);
+        if (result.bookmarked) newBookmarks.add(id);
+        else newBookmarks.delete(id);
+        setBookmarks(newBookmarks);
+
+        setAllResults(prev => prev.map(r => r.id === id ? { ...r, isSaved: result.bookmarked } : r));
+      } catch (error) {
+        console.error('Failed to toggle bookmark:', error);
       }
   };
 
   return (
     <div className="h-full flex flex-col bg-white font-sans overflow-hidden ml-16 md:ml-0">
-        {/* Header / Search Bar Area */}
-        <div className="px-4 md:px-8 pt-4 md:pt-8 pb-2 md:pb-4 bg-white z-20 border-b border-slate-50 md:border-transparent shadow-sm md:shadow-none">
+        {/* Header Section */}
+        <div className="px-4 md:px-8 pt-4 md:pt-8 pb-2 md:pb-4 bg-white z-20 border-b border-slate-50 shadow-sm">
             <div className="max-w-[1800px] mx-auto">
-                 {/* Top Row: Title & Badges */}
                  <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-2">
                     <h1 className="text-xl md:text-2xl font-bold text-slate-900">레퍼런스 탐색 (Reference Discovery)</h1>
-                    <div className="flex gap-2 self-start md:self-auto">
-                        {analysisContext?.analysis && (
-                            <div className="px-2 md:px-3 py-1 bg-primary-50 border border-primary-100 rounded-lg text-primary-700 text-[10px] md:text-xs font-bold flex items-center gap-1.5">
-                                <Zap className="w-3 h-3" />
-                                <span>분석 기반 추천</span>
-                            </div>
-                        )}
-                    </div>
+                    {analysisContext?.analysis && (
+                        <div className="px-3 py-1 bg-primary-50 text-primary-700 text-xs font-bold rounded-full flex items-center gap-1.5 border border-primary-100">
+                            <Zap className="w-3 h-3" /> 분석 기반 추천
+                        </div>
+                    )}
                  </div>
                  
-                 {/* Search Inputs Row */}
                  <div className="flex flex-col md:flex-row gap-3 md:gap-4">
                     <div className="w-full md:flex-1 relative group">
                         <Search className="absolute left-4 md:left-5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4 md:w-5 md:h-5 group-focus-within:text-primary-500 transition-colors" />
@@ -131,8 +271,9 @@ const SearchPage: React.FC = () => {
                             type="text" 
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
+                            onKeyPress={handleKeyPress}
                             placeholder="스타일 검색..." 
-                            className="w-full h-11 md:h-14 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl pl-10 md:pl-12 pr-4 text-sm md:text-base font-medium placeholder-slate-400 focus:ring-2 focus:ring-primary-100 focus:border-primary-300 outline-none transition-all shadow-sm appearance-none"
+                            className="w-full h-11 md:h-14 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl pl-10 md:pl-12 pr-4 text-sm md:text-base font-medium placeholder-slate-400 focus:ring-2 focus:ring-primary-100 focus:border-primary-300 outline-none transition-all shadow-sm"
                         />
                     </div>
                     <div className="flex gap-2 w-full md:w-auto">
@@ -140,7 +281,11 @@ const SearchPage: React.FC = () => {
                             <ImageIcon className="w-4 h-4 md:w-5 md:h-5" />
                             <span className="hidden lg:inline">이미지</span>
                         </button>
-                        <button className="flex-1 md:flex-none h-11 md:h-14 px-4 md:px-6 bg-primary-500 text-white rounded-xl md:rounded-2xl hover:bg-primary-600 shadow-lg shadow-primary-200 transition-all flex items-center justify-center gap-2 font-bold text-sm active:scale-95">
+                        <button 
+                            onClick={handleStyleSearch}
+                            disabled={isLoading}
+                            className="flex-1 md:flex-none h-11 md:h-14 px-4 md:px-6 bg-primary-500 text-white rounded-xl md:rounded-2xl hover:bg-primary-600 shadow-lg shadow-primary-200 transition-all flex items-center justify-center gap-2 font-bold text-sm active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
                             <Sparkles className="w-4 h-4 md:w-5 md:h-5" />
                             <span className="hidden lg:inline">내 스타일 검색</span>
                             <span className="lg:hidden">AI 검색</span>
@@ -148,7 +293,7 @@ const SearchPage: React.FC = () => {
                     </div>
                  </div>
 
-                 {/* Filters Row - Touch Optimized Scrolling */}
+                 {/* Filters Row */}
                  <div className="flex items-center gap-4 mt-4 overflow-x-auto scrollbar-hide pb-2 -mx-4 px-4 md:mx-0 md:px-0">
                     <div className="flex gap-2 flex-nowrap">
                         <div className="md:hidden flex items-center justify-center w-10 h-10 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 flex-shrink-0">
@@ -187,210 +332,154 @@ const SearchPage: React.FC = () => {
             </div>
         </div>
 
-        {/* Main Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-8 pt-2 md:pt-4 scrollbar-hide">
-            <div className="max-w-[1800px] mx-auto pb-24 md:pb-20">
-                {/* Responsive Grid: 6 Cols on XL */}
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6">
-                    {searchResults.length > 0 ? (
-                        searchResults.map((item) => (
+        {/* Main Grid */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 scrollbar-hide">
+            <div className="max-w-[1800px] mx-auto pb-20">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4 lg:gap-6">
+                    {searchResults.map((item, index) => {
+                        // Attach ref to the last element for infinite scroll
+                        const isLast = index === searchResults.length - 1;
+                        return (
                             <div 
-                                key={item.id} 
+                                key={`${item.id}-${index}`} 
+                                ref={isLast ? lastElementRef : null}
                                 onClick={() => setSelectedResult(item)}
-                                className="group relative break-inside-avoid bg-white rounded-xl md:rounded-2xl overflow-hidden border border-slate-100 cursor-pointer shadow-sm hover:shadow-md transition-all active:scale-[0.98] md:hover:-translate-y-1"
+                                className="group relative bg-white rounded-xl overflow-hidden border border-slate-100 cursor-pointer hover:shadow-md transition-all hover:-translate-y-1"
                             >
-                                {/* Desktop Hover Overlay */}
-                                <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20 hidden md:block">
-                                    <div className="absolute top-3 right-3">
+                                {/* Image & Overlay */}
+                                <div className="relative aspect-[3/4] bg-slate-100">
+                                    <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" loading="lazy" />
+                                    <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity duration-200" />
+                                    <div className="absolute top-3 right-3 flex gap-2">
+                                        {item.awards && (
+                                            <div className="px-2 py-1 bg-yellow-400 text-black text-[10px] font-bold rounded flex items-center gap-1 shadow-sm">
+                                                <Award className="w-3 h-3" /> Pick
+                                            </div>
+                                        )}
                                         <button 
                                             onClick={(e) => { e.stopPropagation(); handleSave(item.id); }}
-                                            className={`p-2 rounded-full shadow-lg transform transition-all hover:scale-110 ${
-                                                item.isSaved 
-                                                ? 'bg-primary-500 text-white' 
-                                                : 'bg-white text-slate-900 hover:bg-primary-50 hover:text-primary-600'
+                                            className={`p-2 rounded-full shadow-lg transition-transform hover:scale-110 z-10 ${
+                                                item.isSaved ? 'bg-primary-500 text-white' : 'bg-white text-slate-900 hover:text-primary-500'
                                             }`}
                                         >
                                             {item.isSaved ? <Check className="w-4 h-4" /> : <Bookmark className="w-4 h-4" />}
                                         </button>
                                     </div>
-                                    
-                                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/60 to-transparent text-white transform translate-y-4 group-hover:translate-y-0 transition-transform duration-200">
-                                        <div className="flex justify-between items-end">
-                                            <span className="font-bold text-sm truncate pr-2">{item.title}</span>
-                                            <div className="flex items-center gap-1 bg-white/20 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-mono">
-                                                <span>{item.similarity}%</span>
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
-
-                                {/* Mobile Indicators (Always Visible or Top Right) */}
-                                <div className="absolute top-2 right-2 z-20 flex gap-1 md:hidden">
-                                    {item.isSaved && (
-                                        <div className="p-1.5 bg-primary-500 rounded-full text-white shadow-sm">
-                                            <Check className="w-3 h-3" />
+                                {/* Title */}
+                                <div className="p-3">
+                                    <h3 className="text-sm font-bold text-slate-900 truncate">{item.title}</h3>
+                                    <div className="flex justify-between items-center mt-1">
+                                        <p className="text-xs text-slate-500">{item.category}</p>
+                                        <div className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] font-mono text-slate-600">
+                                            {item.similarity}%
                                         </div>
-                                    )}
-                                </div>
-                                
-                                {/* Awards Badge */}
-                                {item.awards && (
-                                    <div className="absolute top-2 left-2 z-10 px-1.5 py-0.5 bg-yellow-400 text-black text-[8px] md:text-[10px] font-bold rounded-md shadow-sm flex items-center gap-1">
-                                        <Award className="w-2 h-2 md:w-3 md:h-3" /> Pick
-                                    </div>
-                                )}
-
-                                <div className="relative aspect-[3/4] bg-slate-50">
-                                    <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" loading="lazy" />
-                                    {/* Mobile Title Gradient Overlay */}
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent md:hidden flex items-end p-3">
-                                        <span className="text-white text-xs font-bold truncate w-full">{item.title}</span>
                                     </div>
                                 </div>
                             </div>
-                        ))
-                    ) : (
-                        <div className="col-span-full flex flex-col items-center justify-center py-20 text-slate-400">
-                            <Search className="w-12 h-12 mb-4 opacity-20" />
-                            <p className="font-medium">검색 결과가 없습니다.</p>
-                            <button onClick={() => setActiveCategories(['All'])} className="mt-4 text-primary-600 font-bold text-sm hover:underline">
-                                필터 초기화
-                            </button>
-                        </div>
-                    )}
+                        );
+                    })}
                 </div>
+
+                {/* Loading States */}
+                {isLoading && (
+                    <div className="flex justify-center py-20">
+                        <Loader2 className="w-10 h-10 text-primary-500 animate-spin" />
+                    </div>
+                )}
+                
+                {isLoadingMore && (
+                    <div className="flex justify-center py-8">
+                        <Loader2 className="w-6 h-6 text-primary-400 animate-spin" />
+                    </div>
+                )}
+
+                {/* Empty State */}
+                {!isLoading && searchResults.length === 0 && hasSearched && (
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                        <Search className="w-12 h-12 mb-4 opacity-20" />
+                        <p className="font-medium mb-2">검색 결과가 없습니다.</p>
+                        <button 
+                            onClick={() => {
+                                setSearchTerm('');
+                                setAllResults([]);
+                                setHasSearched(false);
+                            }}
+                            className="text-primary-600 font-bold text-sm hover:underline"
+                        >
+                            검색 초기화
+                        </button>
+                    </div>
+                )}
+                
+                {!isLoading && !hasSearched && (
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                        <Sparkles className="w-12 h-12 mb-4 opacity-20" />
+                        <p className="font-medium">검색어를 입력하여 레퍼런스를 찾아보세요.</p>
+                    </div>
+                )}
             </div>
         </div>
 
-        {/* Detail Modal (Popup) */}
+        {/* Detail Modal */}
         {selectedResult && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center md:p-4 lg:p-8">
-                <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm transition-opacity" onClick={() => setSelectedResult(null)} />
-                
-                {/* Responsive Modal Container */}
-                <div className="bg-white w-full h-[100dvh] md:h-[85vh] md:rounded-[2.5rem] md:max-w-6xl flex flex-col md:flex-row overflow-hidden relative z-10 shadow-2xl animate-fade-in-up">
-                    
-                    {/* Close Button - Fixed/Floating on Mobile */}
-                    <button 
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm" onClick={() => setSelectedResult(null)}>
+                <div className="bg-white w-full max-w-5xl h-[85vh] rounded-2xl flex overflow-hidden shadow-2xl relative" onClick={e => e.stopPropagation()}>
+                     <button 
                         onClick={() => setSelectedResult(null)}
-                        className="absolute top-4 right-4 z-30 p-2 bg-white/80 md:bg-white/50 hover:bg-white rounded-full backdrop-blur-md transition-colors shadow-sm md:shadow-none"
-                    >
+                        className="absolute top-4 right-4 z-10 p-2 bg-white/50 hover:bg-white rounded-full backdrop-blur transition-colors"
+                     >
                         <X className="w-6 h-6 text-slate-800" />
-                    </button>
+                     </button>
 
-                    {/* Left: Image Section */}
-                    <div className="w-full md:w-1/2 h-[40vh] md:h-full bg-slate-100 relative group flex-shrink-0">
-                        <img src={selectedResult.imageUrl} alt={selectedResult.title} className="w-full h-full object-contain p-4 md:p-8 bg-slate-50" />
-                        <div className="absolute bottom-4 left-4 right-4 md:bottom-8 md:left-8 md:right-auto flex gap-3 z-20 justify-center md:justify-start">
-                            <button className="px-4 py-2.5 md:px-5 md:py-2.5 bg-white/90 backdrop-blur-md rounded-xl text-xs md:text-sm font-bold text-slate-900 shadow-sm hover:bg-white transition-colors flex items-center gap-2 active:scale-95">
-                                원본 보기 <ArrowUpRight className="w-3 h-3 md:w-4 md:h-4" />
+                     <div className="w-1/2 bg-slate-100 p-8 flex items-center justify-center relative">
+                        <img src={selectedResult.imageUrl} className="max-w-full max-h-full object-contain shadow-lg" />
+                        <a 
+                            href={selectedResult.imageUrl} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="absolute bottom-6 left-6 px-4 py-2 bg-white/90 backdrop-blur rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-white transition-colors"
+                        >
+                            원본 보기 <ArrowUpRight className="w-4 h-4" />
+                        </a>
+                     </div>
+                     
+                     <div className="w-1/2 p-8 overflow-y-auto bg-white">
+                        <div className="mb-6">
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className="px-2 py-1 bg-primary-50 text-primary-700 rounded-md text-xs font-bold uppercase">{selectedResult.category}</span>
+                                {selectedResult.awards && <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-md text-xs font-bold uppercase">Award Winner</span>}
+                            </div>
+                            <h2 className="text-3xl font-bold text-slate-900 leading-tight">{selectedResult.title}</h2>
+                        </div>
+
+                        <div className="bg-slate-50 rounded-xl p-6 mb-6 border border-slate-100">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                                    <Zap className="w-5 h-5 text-primary-500" /> 추천 이유
+                                </h3>
+                                <span className="text-2xl font-bold text-primary-600">{selectedResult.similarity}%</span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">{selectedResult.reason}</p>
+                        </div>
+
+                        <div className="mt-auto pt-6 border-t border-slate-100">
+                            <button 
+                                onClick={() => handleSave(selectedResult.id)} 
+                                className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition-colors ${
+                                    selectedResult.isSaved 
+                                    ? 'bg-slate-100 text-slate-900 hover:bg-slate-200' 
+                                    : 'bg-slate-900 text-white hover:bg-slate-800'
+                                }`}
+                            >
+                                {selectedResult.isSaved ? (
+                                    <><Check className="w-5 h-5" /> 보드에 저장됨</>
+                                ) : (
+                                    <><Bookmark className="w-5 h-5" /> 보드에 저장</>
+                                )}
                             </button>
                         </div>
-                    </div>
-
-                    {/* Right: Analysis & Reasoning Section */}
-                    <div className="w-full md:w-1/2 h-full bg-white flex flex-col overflow-hidden">
-                        <div className="flex-1 overflow-y-auto p-5 md:p-10">
-                            
-                            {/* Header */}
-                            <div className="flex justify-between items-start mb-6 md:mb-8 mt-2 md:mt-0 pr-10 md:pr-0">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                        {selectedResult.awards && (
-                                            <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-lg text-[10px] md:text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                                                <Award className="w-3 h-3" /> Award Winner
-                                            </span>
-                                        )}
-                                        <span className="px-2 py-0.5 bg-primary-50 text-primary-700 rounded-lg text-[10px] md:text-xs font-bold uppercase tracking-wider">
-                                            {selectedResult.category}
-                                        </span>
-                                    </div>
-                                    <h2 className="text-2xl md:text-3xl font-bold text-slate-900 mb-1 font-sans leading-tight">{selectedResult.title}</h2>
-                                    <p className="text-slate-400 font-medium text-xs md:text-sm">'내 스타일 검색' 결과</p>
-                                </div>
-                            </div>
-
-                            {/* Match Reasoning Card */}
-                            <div className="bg-slate-50 rounded-2xl md:rounded-[2rem] p-5 md:p-8 border border-slate-100 mb-6 md:mb-8">
-                                 <div className="flex items-center justify-between mb-4">
-                                     <h3 className="text-base md:text-xl font-bold text-slate-800 flex items-center gap-2">
-                                         <Zap className="w-4 h-4 md:w-5 md:h-5 text-primary-500 fill-primary-500" /> 
-                                         추천 이유 (Why this matches)
-                                     </h3>
-                                     <div className="text-2xl md:text-4xl font-bold text-primary-600">{selectedResult.similarity}%</div>
-                                 </div>
-                                 
-                                 <p className="text-slate-600 leading-relaxed mb-6 font-medium text-sm md:text-base">
-                                     이 레퍼런스는 업로드한 디자인의 <strong>색상 조화</strong>({baselineScores.color}%) 및 <strong>레이아웃 구조</strong>({baselineScores.layout}%)와 높은 일치도를 보입니다.
-                                 </p>
-
-                                 {/* Comparative Infographics */}
-                                 <div className="space-y-4 md:space-y-6">
-                                     <div className="space-y-2">
-                                         <div className="flex justify-between text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                             <span>색상 팔레트 일치도 (Color Match)</span>
-                                             <span className="text-slate-900">92%</span>
-                                         </div>
-                                         <div className="relative h-2 md:h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                                             <div 
-                                                className="absolute top-0 bottom-0 w-0.5 bg-slate-400 z-10" 
-                                                style={{ left: `${baselineScores.color}%` }} 
-                                             />
-                                             <div className="h-full bg-pink-400 rounded-full" style={{ width: '92%' }} />
-                                         </div>
-                                     </div>
-
-                                     <div className="space-y-2">
-                                         <div className="flex justify-between text-[10px] md:text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                             <span>구성 및 레이아웃 일치도 (Layout Match)</span>
-                                             <span className="text-slate-900">88%</span>
-                                         </div>
-                                         <div className="relative h-2 md:h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                                             <div 
-                                                className="absolute top-0 bottom-0 w-0.5 bg-slate-400 z-10" 
-                                                style={{ left: `${baselineScores.layout}%` }} 
-                                             />
-                                             <div className="h-full bg-blue-400 rounded-full" style={{ width: '88%' }} />
-                                         </div>
-                                     </div>
-                                 </div>
-                            </div>
-
-                            {/* Keywords */}
-                            <div className="mb-8">
-                                <h3 className="font-bold text-slate-800 mb-3 flex items-center gap-2 text-sm md:text-base">
-                                    <BarChart3 className="w-4 h-4 text-slate-400" />
-                                    연관 키워드 (Connected Keywords)
-                                </h3>
-                                <div className="flex flex-wrap gap-2">
-                                    {['Minimal', 'Swiss Style', 'Grid System', 'Clean', 'Sans Serif'].map(tag => (
-                                        <span key={tag} className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-600 text-xs md:text-sm font-bold transition-colors">
-                                            #{tag}
-                                        </span>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Mobile Sticky Footer Action */}
-                        <div className="p-4 md:p-8 border-t border-slate-100 bg-white flex justify-between items-center flex-shrink-0 pb-safe">
-                             <button 
-                                onClick={() => handleSave(selectedResult.id)}
-                                className={`flex items-center gap-2 px-4 py-3 rounded-xl border transition-all flex-1 md:flex-none justify-center md:justify-start mr-3 md:mr-0 ${
-                                    selectedResult.isSaved
-                                    ? 'bg-primary-50 border-primary-200 text-primary-600'
-                                    : 'bg-white border-slate-200 text-slate-500'
-                                }`}
-                             >
-                                 {selectedResult.isSaved ? <Check className="w-5 h-5" /> : <Bookmark className="w-5 h-5" />}
-                                 <span className="font-bold text-sm">{selectedResult.isSaved ? '저장됨' : '저장'}</span>
-                             </button>
-                             
-                             <button className="flex-[2] md:flex-none px-6 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 active:scale-95">
-                                 프로젝트에 추가
-                             </button>
-                        </div>
-                    </div>
+                     </div>
                 </div>
             </div>
         )}
