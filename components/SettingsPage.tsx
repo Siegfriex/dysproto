@@ -55,6 +55,11 @@ const SettingsPage: React.FC = () => {
   const navigate = useNavigate();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValues, setEditValues] = useState({
+    displayName: '',
+    bio: '',
+  });
   const [notifications, setNotifications] = useState({
     weeklyReport: true,
     growthAlerts: true,
@@ -66,6 +71,10 @@ const SettingsPage: React.FC = () => {
       try {
         const result = await callGetUserProfile();
         setProfile(result.profile);
+        setEditValues({
+          displayName: result.profile?.displayName || '',
+          bio: result.profile?.bio || '',
+        });
         if (result.profile.settings?.notifications) {
           setNotifications(result.profile.settings.notifications);
         }
@@ -77,6 +86,33 @@ const SettingsPage: React.FC = () => {
     };
     loadProfile();
   }, []);
+
+  const handleEditField = (field: string) => {
+    setEditingField(field);
+  };
+
+  const handleSaveField = async (field: 'displayName' | 'bio') => {
+    try {
+      await callUpdateUserProfile({
+        [field]: editValues[field],
+      });
+      setProfile({
+        ...profile,
+        [field]: editValues[field],
+      });
+      setEditingField(null);
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditValues({
+      displayName: profile?.displayName || '',
+      bio: profile?.bio || '',
+    });
+    setEditingField(null);
+  };
 
   const handleNotificationToggle = async (key: keyof typeof notifications) => {
     const newNotifications = {
@@ -119,7 +155,89 @@ const SettingsPage: React.FC = () => {
         <h1 className="text-2xl md:text-3xl font-bold text-slate-900 mb-6 md:mb-10">Settings</h1>
 
         <Section title="Account" icon={User}>
-            <Row label="Email" value={profile?.email || ''} />
+            <div className="py-3 px-3 md:px-4 -mx-3 md:-mx-4 rounded-xl hover:bg-slate-50 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-slate-700 font-medium text-sm md:text-base">이름</span>
+                {editingField !== 'displayName' && (
+                  <button 
+                    onClick={() => handleEditField('displayName')}
+                    className="text-primary-600 text-xs md:text-sm font-bold hover:text-primary-700 flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                  >
+                    Edit <ChevronRight className="w-3 h-3 md:w-4 md:h-4 ml-1" />
+                  </button>
+                )}
+              </div>
+              {editingField === 'displayName' ? (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={editValues.displayName}
+                    onChange={(e) => setEditValues({ ...editValues, displayName: e.target.value })}
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-200 focus:border-primary-300 outline-none"
+                    maxLength={20}
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => handleSaveField('displayName')}
+                    className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-bold"
+                  >
+                    저장
+                  </button>
+                  <button
+                    onClick={handleCancelEdit}
+                    className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-bold"
+                  >
+                    취소
+                  </button>
+                </div>
+              ) : (
+                <p className="text-slate-400 text-xs md:text-sm">{profile?.displayName || '이름을 설정해주세요'}</p>
+              )}
+            </div>
+            
+            <div className="py-3 px-3 md:px-4 -mx-3 md:-mx-4 rounded-xl hover:bg-slate-50 transition-colors">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-slate-700 font-medium text-sm md:text-base">한 줄 소개</span>
+                {editingField !== 'bio' && (
+                  <button 
+                    onClick={() => handleEditField('bio')}
+                    className="text-primary-600 text-xs md:text-sm font-bold hover:text-primary-700 flex items-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
+                  >
+                    Edit <ChevronRight className="w-3 h-3 md:w-4 md:h-4 ml-1" />
+                  </button>
+                )}
+              </div>
+              {editingField === 'bio' ? (
+                <div className="flex gap-2">
+                  <textarea
+                    value={editValues.bio}
+                    onChange={(e) => setEditValues({ ...editValues, bio: e.target.value })}
+                    className="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-primary-200 focus:border-primary-300 outline-none resize-none"
+                    maxLength={50}
+                    rows={2}
+                    autoFocus
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => handleSaveField('bio')}
+                      className="px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors text-sm font-bold"
+                    >
+                      저장
+                    </button>
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg hover:bg-slate-200 transition-colors text-sm font-bold"
+                    >
+                      취소
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-slate-400 text-xs md:text-sm">{profile?.bio || '한 줄 소개를 입력해주세요'}</p>
+              )}
+            </div>
+            
+            <Row label="Email" value={profile?.email || '익명 사용자'} />
             <Row label="Subscription" value={profile?.subscription === 'pro' ? 'Pro Plan' : profile?.subscription === 'premium' ? 'Premium Plan' : 'Free Plan'} action="Manage" />
         </Section>
 

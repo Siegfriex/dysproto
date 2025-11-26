@@ -20,30 +20,46 @@ const db = getFirestore();
 // Initialize Storage
 const bucket = getStorage().bucket();
 
-// Gemini API 키는 Firebase Functions 환경 변수에서 가져옵니다
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-if (!GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY is not set in environment variables");
-}
-
-const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
-
-// Google Custom Search API 설정
-const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
+// Secret Manager에서 환경 변수로 주입된 시크릿 사용
+// 주의: Firebase Functions v2에서는 Secret Manager의 Secret을 환경 변수로 매핑하려면
+// Firebase Console에서 각 함수의 Configuration 탭에서 수동으로 설정해야 합니다.
+// Google Custom Search Engine ID (환경 변수 또는 기본값)
 const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID || "665cb462ec68043bc";
 
-if (!GOOGLE_SEARCH_API_KEY) {
-  console.warn("GOOGLE_SEARCH_API_KEY is not set in environment variables");
-}
-
 /**
- * Helper function to get user ID (optional authentication)
+ * Helper function to get user ID from Firebase Authentication
+ * 
+ * Supports anonymous authentication for both development and production environments.
+ * Anonymous authentication provides a unique UID for each user without requiring
+ * email/password, making it ideal for user testing and quick onboarding.
+ * 
+ * @param request - Firebase Functions request object containing auth information
+ * @returns User ID (UID) from Firebase Authentication
+ * @throws HttpsError if user is not authenticated (in production)
+ * 
+ * @example
+ * ```typescript
+ * const userId = getUserId(request);
+ * // userId will be the Firebase Auth UID (e.g., "abc123...")
+ * ```
  */
 function getUserId(request: any): string {
   const userId = request.auth?.uid;
-  // For now, return a default user ID if not authenticated
-  return userId || "anonymous";
+  
+  if (!userId) {
+    // Development environment: allow anonymous fallback
+    // Production: require authentication (anonymous auth counts as authenticated)
+    if (process.env.NODE_ENV === 'development' || process.env.FUNCTIONS_EMULATOR) {
+      console.warn('No authenticated user found, using anonymous fallback (development only)');
+      return "anonymous";
+    }
+    throw new HttpsError(
+      "unauthenticated",
+      "User must be authenticated. Please sign in."
+    );
+  }
+  
+  return userId;
 }
 
 /**
@@ -73,6 +89,7 @@ async function uploadImageToStorage(
     });
 
     // Return public URL (accessible via Storage Rules)
+    // Storage Rules에서 인증된 사용자가 자신의 파일을 읽을 수 있도록 설정됨
     const publicUrl = `https://storage.googleapis.com/${bucket.name}/${filePath}`;
     return publicUrl;
   } catch (error) {
@@ -89,18 +106,27 @@ async function uploadImageToStorage(
  * 클라이언트로부터 이미지를 받아 Gemini API로 분석하고 Firestore에 저장합니다
  */
 export const analyzeDesign = onCall(
-  { region: "asia-northeast3", timeoutSeconds: 300, memory: "512MiB" },
+  { 
+    region: "asia-northeast3", 
+    timeoutSeconds: 300, 
+    memory: "512MiB"
+  },
   async (request) => {
     // Get user ID (optional authentication)
     const userId = getUserId(request);
 
     const data = request.data;
-    if (!ai) {
+    
+    // Secret Manager에서 환경 변수로 주입된 API 키 사용
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
       throw new HttpsError(
         "failed-precondition",
         "Gemini API is not configured"
       );
     }
+    
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
     const { imageData, mimeType, fileName } = data;
 
@@ -298,18 +324,25 @@ export const analyzeDesign = onCall(
  * 채팅 세션을 Firestore에 저장합니다
  */
 export const chatWithMentor = onCall(
-  { region: "asia-northeast3" },
+  { 
+    region: "asia-northeast3"
+  },
   async (request) => {
     // Get user ID (optional authentication)
     const userId = getUserId(request);
 
     const data = request.data;
-    if (!ai) {
+    
+    // Secret Manager에서 환경 변수로 주입된 API 키 사용
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
       throw new HttpsError(
         "failed-precondition",
         "Gemini API is not configured"
       );
     }
+    
+    const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
 
     const { message, sessionId, analysisContext } = data;
 
@@ -634,12 +667,19 @@ export const getUserProfile = onCall(
 
       if (!doc.exists) {
         // Create default profile
+        // For anonymous users, displayName will be empty and should be set via updateUserProfile
+        // For email/password users, use email as default displayName if available
+        const authEmail = request.auth?.token.email || "";
+        const defaultDisplayName = authEmail 
+          ? authEmail.split("@")[0] // Use email username as default displayName
+          : ""; // Anonymous users should set displayName via onboarding
+        
         const defaultProfile: Omit<UserDocument, "createdAt" | "updatedAt"> & {
           createdAt: FieldValue;
           updatedAt: FieldValue;
         } = {
-          displayName: "",
-          email: request.auth?.token.email || "",
+          displayName: defaultDisplayName,
+          email: authEmail,
           subscription: "free",
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -1045,7 +1085,9 @@ export const getCollections = onCall(
  * Google Custom Search Image API를 사용하여 이미지 검색
  */
 export const searchImages = onCall(
-  { region: "asia-northeast3" },
+  { 
+    region: "asia-northeast3"
+  },
   async (request) => {
     const { query, num = 10, start = 1 } = request.data;
 
@@ -1056,6 +1098,8 @@ export const searchImages = onCall(
       );
     }
 
+    // Secret Manager에서 환경 변수로 주입된 API 키 사용
+    const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
     if (!GOOGLE_SEARCH_API_KEY) {
       throw new HttpsError(
         "failed-precondition",

@@ -5,12 +5,12 @@ import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "dysproto.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "dysproto",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "dysproto.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "894139739522",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:894139739522:web:133dc9400f05814bd8739b"
+  apiKey: "AIzaSyAu1H4QgBbTc0ptMWeabyvFCqzCMSzupqE",
+  authDomain: "dysproto.firebaseapp.com",
+  projectId: "dysproto",
+  storageBucket: "dysproto.firebasestorage.app",
+  messagingSenderId: "894139739522",
+  appId: "1:894139739522:web:133dc9400f05814bd8739b"
 };
 
 // Initialize Firebase

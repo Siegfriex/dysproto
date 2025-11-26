@@ -1,10 +1,58 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // TEMPORARY: Allow all reads and writes for development
-    // TODO: Re-enable authentication rules when auth is fully set up
-    match /{document=**} {
-      allow read, write: if true;
+    // Helper function to check if user is authenticated
+    // Anonymous authentication counts as authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user owns the resource
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Users collection: users can read/write their own profile
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+    
+    // Analyses collection: users can read/write their own analyses
+    match /analyses/{analysisId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        !exists(/databases/$(database)/documents/analyses/$(analysisId))
+      );
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Chat sessions collection: users can read/write their own sessions
+    match /chatSessions/{sessionId} {
+      allow read, write: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        !exists(/databases/$(database)/documents/chatSessions/$(sessionId))
+      );
+    }
+    
+    // Bookmarks collection: users can read/write their own bookmarks
+    match /bookmarks/{bookmarkId} {
+      allow read, write: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        !exists(/databases/$(database)/documents/bookmarks/$(bookmarkId))
+      );
+    }
+    
+    // Collections collection: users can read/write their own collections
+    match /collections/{collectionId} {
+      allow read, write: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        request.resource.data.userId == request.auth.uid ||
+        !exists(/databases/$(database)/documents/collections/$(collectionId))
+      );
     }
   }
 }

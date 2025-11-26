@@ -1,12 +1,28 @@
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Upload, Search, User, Settings } from 'lucide-react';
+import { callGetUserProfile } from '../services/dataService';
 
 const Sidebar: React.FC = () => {
   const location = useLocation();
+  const [profile, setProfile] = useState<any>(null);
 
   const isActive = (path: string) => location.pathname === path;
+
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const result = await callGetUserProfile();
+        if (result.success && result.profile) {
+          setProfile(result.profile);
+        }
+      } catch (error) {
+        console.error('Failed to load profile:', error);
+      }
+    };
+    loadProfile();
+  }, []);
 
   const navItems = [
     { path: '/upload', icon: Upload, label: 'Upload' },
@@ -47,13 +63,25 @@ const Sidebar: React.FC = () => {
       </nav>
 
       <div className="p-2 md:p-6">
-        <div className="flex items-center justify-center md:justify-start p-2 md:p-3 rounded-2xl bg-slate-50 border border-slate-100 hover:border-primary-200 transition-colors cursor-pointer group">
-            <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-gradient-to-tr from-primary-400 to-primary-600 flex-shrink-0 shadow-md ring-2 ring-white" />
-            <div className="ml-3 hidden md:block overflow-hidden">
-                <p className="text-sm font-bold text-slate-700 truncate group-hover:text-primary-600 transition-colors">Kim Design</p>
-                <p className="text-xs text-slate-400 truncate">Pro Member</p>
+        <Link to="/mypage" className="flex items-center justify-center md:justify-start p-2 md:p-3 rounded-2xl bg-slate-50 border border-slate-100 hover:border-primary-200 transition-colors cursor-pointer group">
+            <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-gradient-to-tr from-primary-400 to-primary-600 flex-shrink-0 shadow-md ring-2 ring-white overflow-hidden">
+              {profile?.photoURL && (
+                <img 
+                  src={profile.photoURL} 
+                  alt={profile.displayName || 'User'} 
+                  className="w-full h-full object-cover"
+                />
+              )}
             </div>
-        </div>
+            <div className="ml-3 hidden md:block overflow-hidden">
+                <p className="text-sm font-bold text-slate-700 truncate group-hover:text-primary-600 transition-colors">
+                  {profile?.displayName || 'User'}
+                </p>
+                <p className="text-xs text-slate-400 truncate capitalize">
+                  {profile?.subscription || 'Free'} Member
+                </p>
+            </div>
+        </Link>
       </div>
     </div>
   );

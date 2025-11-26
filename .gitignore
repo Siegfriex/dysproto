@@ -26,6 +26,10 @@ functions/lib/**/*
 *.backup
 *.bak
 
+# Test files
+test-*.html
+*-test.html
+
 # Deployment documentation with sensitive information
 DEPLOYMENT_*.md
 FINAL_DEPLOYMENT_*.md
