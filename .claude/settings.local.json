@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir /b /s c:dysprototype 2)",
+      "Bash(nul)",
+      "Bash(findstr:*)",
+      "Bash(firebase:*)",
+      "Bash(npm --version:*)",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(gcloud projects add-iam-policy-binding:*)",
+      "Bash(gcloud run services add-iam-policy-binding:*)",
+      "Bash(gcloud run services list:*)",
+      "Bash(npm install:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(gcloud services enable:*)",
+      "Bash(gcloud services list:*)",
+      "Bash(dir tatus 2)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
